@@ -1,0 +1,178 @@
+---
+# Initial preparation of fresh server
+- name: Getting new servers IP address
+  hosts: localhost
+  gather_facts: no
+  vars_prompt:
+    - name: target_host
+      prompt: Please provide the IP of the new server
+      private: no
+  tasks:
+    - add_host: name="{{ target_host }}" groups=dynamically_created_hosts
+
+
+- name: Preapring the new server
+  remote_user: ubuntu
+  hosts: dynamically_created_hosts
+  gather_facts: no
+  become: yes
+  become_user: root
+  become_method: sudo
+  vars:
+    ansible_ssh_port: 22
+  tasks:
+    - name: Update and Upgrade apt packages
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+        upgrade: yes
+    - block:
+        - name: Install unattended upgrades
+          apt: name=unattended-upgrades state=present
+
+        - name: Configure unattended upgrades
+          copy: src=files/20auto-upgrades dest=/etc/apt/apt.conf.d/20auto-upgrades owner=root group=root mode=0644
+
+    - block:
+        - name: Adding server to Nagios Monitoring
+          apt: name={{ item }} state=present
+          with_items:
+            - nagios-nrpe-server
+            - nagios-plugins
+            - bc
+
+        - name: Replacing nrpe.cfg file
+          copy: src=files/nagios-configurations/nrpe.cfg.txt dest=/etc/nagios/nrpe.cfg owner=root group=root mode=0755
+
+        - name: copying check_cpu.sh file
+          copy: src=files/nagios-configurations/check_cpu.sh dest=/usr/lib/nagios/plugins/check_cpu.sh  owner=nagios group=nagios mode=0755
+
+        - name: Copying check_memory.sh file
+          copy: src=files/nagios-configurations/check_memory.sh dest=/usr/lib/nagios/plugins/check_memory.sh  owner=nagios group=nagios mode=0755
+
+        - name: Copying check_swapfile.sh file
+          copy: src=files/nagios-configurations/check_swapfile.sh dest=/usr/lib/nagios/plugins/check_swapfile.sh  owner=nagios group=nagios mode=0755
+
+        - name: Copying check_disk-usage.sh file
+          copy: src=files/nagios-configurations/check_disk-usage.sh dest=/usr/lib/nagios/plugins/check_disk-usage.sh  owner=nagios group=nagios mode=0755
+
+        - name: Copying check_osupdates.sh file
+          copy: src=files/nagios-configurations/check_osupdates.sh dest=/usr/lib/nagios/plugins/check_osupdates.sh  owner=nagios group=nagios mode=0755
+
+        - name: Restarting nrpe service
+          service: name=nagios-nrpe-server state=restarted
+
+    - name: Changing ssh port to 3030
+      #copy: src=files/sshd_config dest=/etc/ssh/sshd_config owner=root group=root mode=0644
+      #lineinfile:
+      #  dest: /etc/ssh/sshd_config
+      #  regexp: "^Port 22"
+      #  line: "Port 3030"
+      lineinfile:
+            dest: /etc/ssh/sshd_config
+            regexp: "Port 22"
+            line: "Port 3030" 
+
+    - name: Enable ufw
+      ufw:
+        state: enabled
+        rule: allow
+        proto: tcp
+        port: "{{ item }}"
+      with_items:
+        - 3030
+        - 5666
+        - 80
+        - 443
+
+    - block:
+        - name: Creating a 1GB swap space
+          command: fallocate -l 1G /swapfile
+
+        - name: Change permission
+          file: path=/swapfile mode=600 state=file
+
+        - name: Setup swap
+          command: mkswap /swapfile
+
+        - name: Create swap
+          command: swapon /swapfile
+
+        - name: Add to fstab
+          lineinfile:
+            path: /etc/fstab
+            line: /swapfile none swap sw 0 0
+
+    #Below few task will copy all the scripts that may be necessary for server.
+    - name: Check for scripts dir.
+      stat:
+        path: /root/scripts
+      register: check_folder
+
+    - name: Creating scripts folder
+      file:
+        path: /root/scripts
+        state: directory
+        mode: '0755'
+        group: root
+        owner: root
+      when: check_folder.stat.exists == false
+
+    - name: copying the ssl-expiry-check script file.
+      copy: src=files/scripts/ssl-expiry-check.sh dest=/root/scripts/ssl-expiry-check.sh owner=root group=root mode=0755
+
+    - name: copying the ssl-cert-check directory.
+      copy: src=files/scripts/ssl-cert-check/ dest=/root/scripts/ssl-cert-check owner=root group=root mode=0755
+
+    - name: copying the full_backup script file.
+      copy: src=files/scripts/full_backup.sh dest=/root/scripts/full_backup.sh owner=root group=root mode=0755
+
+    - name: copying apache vhost file
+      copy: src=files/scripts/apache_vhost.sh dest=/root/scripts/apache_vhost.sh owner=root group=root mode=0755
+
+    - name: copying apache-proxy vhost file
+      copy: src=files/scripts/proxy-apache_vhost.sh dest=/root/scripts/proxy-apache_vhost.sh owner=root group=root mode=0755
+
+    - name: copying nginx vhost file
+      copy: src=files/scripts/nginx_vhost.sh dest=/root/scripts/nginx_vhost.sh owner=root group=root mode=0755
+
+    - name: copying nginx-proxy vhost file
+      copy: src=files/scripts/proxy-nginx_vhost.sh dest=/root/scripts/proxy-nginx_vhost.sh owner=root group=root mode=0755
+
+    - name: copying service_check vhost file
+      copy: src=files/scripts/service_check.sh dest=/root/scripts/service_check.sh owner=root group=root mode=0755
+
+    - cron:
+        name: "SSL expiry check"
+        user: "root"
+        special_time: "weekly"
+        job: "/root/scripts/ssl-expiry-check.sh > /var/log/ssl-expiry-check.log"
+
+    - name: Restart sshd service
+      service: name=ssh state=restarted
+
+- name: Adding configuration file in Nagios server
+  hosts: nagios
+  gather_facts: no
+  vars:
+    ansible_ssh_port: 3030
+  vars_prompt:
+    - name: target_hostname
+      prompt: Please enter hostname of the server you want to add to nagios monitor
+      private: no
+    - name: target_host
+      prompt: Please provide it's IP
+      private: no
+  tasks:
+    - name: Creating host configuration file
+      template: src=files/nagios-host.cfg dest=/usr/local/nagios/etc/servers/{{ target_hostname }}_{{ target_host }}.cfg
+
+    - name: Check nagios configuration
+      command: /usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg
+      register: nagios_check
+      ignore_errors: yes
+
+    - name: Restart nagios service
+      service: name=nagios state=restarted
+      when: nagios_check.rc == 0
+...
