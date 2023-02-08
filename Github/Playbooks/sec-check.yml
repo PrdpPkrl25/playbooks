@@ -1,0 +1,83 @@
+---
+- hosts: do
+  become: yes
+  tasks:
+#Check if ufw is enabled          
+    - name: check if ufw is enabled
+      command: ufw status
+      register: output
+    - debug:
+        msg: "{{ output.stdout.split('\n') }}"
+
+#Check if apache and nginx is installed or not
+    - name: Check if Apache is installed or not
+      package_facts:
+         manager: auto
+    - name: Apache checked
+      debug:
+        msg: "Apache installed"
+      when: "'apache2' in ansible_facts.packages"
+    - name: Apache checked
+      debug:
+        msg: "Apache not installed"
+      when: "'apache2'not in ansible_facts.packages"
+    - name: Show Apache version
+      debug:
+        var: ansible_facts.packages.apache2[0].version
+    - name: Check if Nginx is installed or not
+      package_facts:
+        manager: auto
+    - name: Nginx checked
+      debug:
+        msg: " Nginx installed"
+      when: "'nginx' in ansible_facts.packages"
+    - name: Nginx checked
+      debug:
+        msg: "Nginx not installed"
+      when: "'nginx' not in ansible_facts.packages"
+    - name: Show Nginx version
+      debug:
+        var: ansible_facts.packages.nginx[0].version
+    - name: checking which one is running
+      service_facts:
+    - debug:
+        var: ansible_facts.services.apache2.state
+    - debug:
+        var: ansible_facts.services.nginx.state
+
+#Check for value of SSLProtocol
+    - name: SSLProtocol value
+      command: grep -i -r "SSLProtocol" /etc/apache2/mods-available/ssl.conf
+      register: output
+      ignore_errors: yes
+    - debug:
+        msg: "{{ output.stdout }}"
+     
+    - name: SSLProtocol for nginx
+      command: grep -r ssl_protocol /etc/nginx
+      register: output
+      ignore_errors: yes
+    - debug:
+        msg: "{{ output.stdout }}"
+    
+    - name: SSLProtocol for letsencrypt
+      command: grep -i -r "SSLProtocol" /etc/letsencrypt/options-ssl-apache.conf
+      register: output
+      ignore_errors: yes
+    - debug:
+         msg: "{{ output.stdout }}"
+  
+#Check if Clamav is installed on server
+    - name: Check if Clamav is installed or not
+      package_facts:
+       manager: auto
+
+    - name: Clamav checked
+      debug:
+        msg: "Clamav installed"
+      when: "'clamav' in ansible_facts.packages"
+    - name: Clamav checked
+      debug:
+        msg: "Clamav not installed"
+      when: "'clamav' not in ansible_facts.packages"
+

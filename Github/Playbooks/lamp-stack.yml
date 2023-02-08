@@ -1,0 +1,95 @@
+---
+# Installing LAMP stack on new server after initial server setup is done[initial-server-setup.yml]
+- name: Getting new server IP address
+  hosts: localhost
+  gather_facts: no
+  vars_prompt:
+    - name: target_host
+      prompt: Please provide the IP of the new server
+      private: no
+  tasks:
+    - add_host: name="{{ target_host }}" groups=dynamically_created_hosts
+
+- name: Installing LAMP stack
+  remote_user: root
+  hosts: dynamically_created_hosts
+  gather_facts: no
+  vars:
+    ansible_ssh_port: 3030
+    mysql_root_pass: W3b4Maj5IdE6
+  tasks:
+    - name: Installing Apache
+      apt: pkg=apache2 state=present
+
+    - block:
+        - name: Adding ppa
+          apt_repository:
+            repo: ppa:ondrej/php
+
+        - name: Updating apt
+          apt: update_cache=true
+
+        - name: Installing PHP7.1 and components
+          apt: pkg={{ item }} state=present
+          with_items:
+            - php7.1
+            - php7.1-cli
+            - php7.1-gd
+            - php7.1-intl
+            - php7.1-xml
+            - php7.1-mbstring
+            - php7.1-zip
+            - libapache2-mod-php7.1
+            - php7.1-mysql
+            - php7.1-common
+            - php7.1-mcrypt
+
+        - name: Increasing maximum upload size
+          lineinfile: 
+            dest: /etc/php/7.1/apache2/php.ini
+            regexp: "upload_max_filesize ="
+            line: "upload_max_filesize = 2G"
+
+        - name: Increase post max size
+          lineinfile:
+            dest: /etc/php/7.1/apache2/php.ini
+            regexp: "post_max_size ="
+            line: "post_max_size = 2G"
+            
+    - block:
+        - name: Setting mysql root pass
+          debconf: name='mysql-server' question='mysql-server/root_password' value='{{mysql_root_pass | quote}}' vtype='password'
+
+        - name: Confirming ansible root pass
+          debconf: name='mysql-server' question='mysql-server/root_password_again' value='{{mysql_root_pass | quote}}' vtype='password'
+
+        - name: Installing mysql server
+          apt: pkg=mysql-server state=present
+
+    - block:
+        - name: Selecting webserver for phpmyadmin
+          debconf: name='phpmyadmin' question='phpmyadmin/reconfigure-webserver' value='apache2' vtype='multiselect'
+
+        - name: dbconfig-install
+          debconf: name='phpmyadmin'  question='phpmyadmin/dbconfig-install' value='true' vtype='boolean'
+
+        - name: phpmyadmin app password
+          debconf: name='phpmyadmin' question='phpmyadmin/app-password-confirm' value='{{mysql_root_pass}}' vtype='password'
+
+        - name: mysql admin pass
+          debconf: name='phpmyadmin'  question='phpmyadmin/mysql/admin-pass' value='{{mysql_root_pass}}' vtype='password'
+          
+        - name: mysql app pass
+          debconf: name='phpmyadmin' question='phpmyadmin/mysql/app-pass' value='{{mysql_root_pass}}' vtype='password'
+
+        - name: Install the phpmyadmin
+          apt: pkg=phpmyadmin state=present
+
+        - name: Configure site for phpmyadmin
+          file:
+            dest: "/etc/apache2/conf-available/phpmyadmin.conf"
+            src: "/etc/phpmyadmin/apache.conf"
+            state: link
+
+...
+
